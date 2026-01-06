@@ -11,8 +11,8 @@
 //! 5. Move to next market and repeat
 
 mod config;
-mod market;
-mod strategy;
+mod market_simple as market;
+mod strategy_simple as strategy;
 mod trader;
 mod trailing_stop;
 mod utils;
@@ -88,12 +88,10 @@ impl Bot {
 
         // Create components
         let market_discovery = MarketDiscovery::new(
-            authenticated_client.clone(),
             config.strategy.market_query.clone(),
         );
 
         let strategy = VolumeStrategy::new(
-            authenticated_client.clone(),
             config.strategy.clone(),
         );
 

@@ -17,10 +17,10 @@ use tracing::{info, warn};
 // Example format: "71321045880685926196226762161781486336990587556547664985916499732654256447732"
 
 /// Token ID for UP outcome (YES the price will go up)
-pub const UP_TOKEN_ID: &str = "REPLACE_WITH_UP_TOKEN_ID";
+pub const UP_TOKEN_ID: &str = "52970414216451044190927002285703297230118342041806026887757331330789564201";
 
 /// Token ID for DOWN outcome (NO the price will not go up)
-pub const DOWN_TOKEN_ID: &str = "REPLACE_WITH_DOWN_TOKEN_ID";
+pub const DOWN_TOKEN_ID: &str = "102605212482950668719677200087023831820840982819997060658190334762301391803087";
 
 /// Market condition ID (can be any string for testing)
 pub const CONDITION_ID: &str = "test_btc_15min_market";
