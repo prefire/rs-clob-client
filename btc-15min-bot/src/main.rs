@@ -11,8 +11,8 @@
 //! 5. Move to next market and repeat
 
 mod config;
-mod market_simple as market;
-mod strategy_simple as strategy;
+mod market_simple;
+mod strategy_simple;
 mod trader;
 mod trailing_stop;
 mod utils;
@@ -26,8 +26,8 @@ use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 
 use crate::config::Config;
-use crate::market::{BtcMarket, MarketDiscovery};
-use crate::strategy::VolumeStrategy;
+use crate::market_simple::{BtcMarket, MarketDiscovery};
+use crate::strategy_simple::VolumeStrategy;
 use crate::trader::Trader;
 use crate::utils::{format_duration, retry_with_backoff, sleep_seconds, sleep_until};
 
@@ -47,8 +47,11 @@ enum BotState {
 }
 
 /// Main bot orchestrator
-struct Bot {
-    trader: Trader,
+struct Bot<S>
+where
+    S: alloy::signers::Signer + Clone,
+{
+    trader: Trader<S>,
     market_discovery: MarketDiscovery,
     strategy: VolumeStrategy,
     config: Config,
@@ -56,7 +59,10 @@ struct Bot {
     current_market: Option<BtcMarket>,
 }
 
-impl Bot {
+impl<S> Bot<S>
+where
+    S: alloy::signers::Signer + Clone + Send + Sync,
+{
     /// Create a new bot instance
     async fn new(config: Config) -> Result<Self> {
         info!("Initializing Bitcoin 15min Trading Bot...");

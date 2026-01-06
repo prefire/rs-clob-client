@@ -15,9 +15,9 @@ use polymarket_client_sdk::types::Decimal;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
-use crate::config::{Config, RiskConfig};
-use crate::market::{BtcMarket, MarketSide};
-use crate::strategy::TradingSignal;
+use crate::config::Config;
+use crate::market_simple::{BtcMarket, MarketSide};
+use crate::strategy_simple::TradingSignal;
 use crate::trailing_stop::{ExitReason, TrailingStop};
 
 /// Active position
@@ -52,16 +52,19 @@ pub struct Position {
 }
 
 /// Trader for executing orders
-pub struct Trader {
+pub struct Trader<S> {
     client: Client,
-    signer: LocalSigner,
+    signer: S,
     config: Config,
     current_position: Option<Position>,
 }
 
-impl Trader {
+impl<S> Trader<S>
+where
+    S: alloy::signers::Signer + Clone,
+{
     /// Create a new trader
-    pub fn new(client: Client, signer: LocalSigner, config: Config) -> Self {
+    pub fn new(client: Client, signer: S, config: Config) -> Self {
         Self {
             client,
             signer,

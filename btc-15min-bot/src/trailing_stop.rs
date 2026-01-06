@@ -9,7 +9,7 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
-use crate::market::MarketSide;
+use crate::market_simple::MarketSide;
 
 /// Trailing stop state
 #[derive(Debug, Clone, Serialize, Deserialize)]
