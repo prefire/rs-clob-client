@@ -212,9 +212,19 @@ impl MarketDiscovery {
             let up_token_id = tokens[0].trim().to_string();
             let down_token_id = tokens[1].trim().to_string();
 
-            // Parse event timing
-            let start_time = event.start_date.unwrap_or(now);
-            let end_time = event.end_date.unwrap_or(start_time + chrono::Duration::minutes(15));
+            // Parse event timing from slug timestamp
+            // Slug format: "btc-updown-15m-1767785400" where last part is Unix timestamp
+            let start_time = if let Some(timestamp_str) = slug.split('-').last() {
+                if let Ok(timestamp) = timestamp_str.parse::<i64>() {
+                    DateTime::from_timestamp(timestamp, 0).unwrap_or(now)
+                } else {
+                    event.start_date.unwrap_or(now)
+                }
+            } else {
+                event.start_date.unwrap_or(now)
+            };
+
+            let end_time = start_time + chrono::Duration::minutes(15);
 
             btc_markets.push(BtcMarket {
                 condition_id: market.condition_id.clone().unwrap_or_default(),
