@@ -99,9 +99,18 @@ impl MarketDiscovery {
 
             info!("   Fetched {} markets on page {}", page.data.len(), page_count);
 
+            // Log sample slugs on first page to see format
+            if page_count == 1 {
+                for (i, market) in page.data.iter().take(5).enumerate() {
+                    info!("   Sample slug {}: {}", i + 1, market.market_slug);
+                }
+            }
+
             // Count BTC markets on this page
             let btc_count_page = page.data.iter()
-                .filter(|m| m.market_slug.contains("btc-updown-15m"))
+                .filter(|m| m.market_slug.contains("btc-updown-15m") ||
+                           m.market_slug.contains("btc") ||
+                           m.question.to_lowercase().contains("bitcoin up or down"))
                 .count();
 
             if btc_count_page > 0 {
@@ -126,20 +135,24 @@ impl MarketDiscovery {
 
         info!("   Total markets fetched: {} across {} pages", all_markets.len(), page_count);
 
-        // Count total BTC markets
+        // Count total BTC markets with broader search
         let btc_count = all_markets.iter()
-            .filter(|m| m.market_slug.contains("btc-updown-15m"))
+            .filter(|m| m.market_slug.contains("btc-updown-15m") ||
+                       m.market_slug.contains("btc") ||
+                       m.question.to_lowercase().contains("bitcoin up or down"))
             .count();
 
-        info!("   Total BTC 15min markets found: {}", btc_count);
+        info!("   Total BTC-related markets found: {}", btc_count);
 
         // Log first few BTC markets
         for (i, market) in all_markets.iter()
-            .filter(|m| m.market_slug.contains("btc-updown-15m"))
-            .take(3)
+            .filter(|m| m.market_slug.contains("btc-updown-15m") ||
+                       m.market_slug.contains("btc") ||
+                       m.question.to_lowercase().contains("bitcoin up or down"))
+            .take(5)
             .enumerate() {
-            info!("   BTC Market #{}: {} (active={}, closed={}, accepting={})",
-                i + 1, market.question, market.active, market.closed, market.accepting_orders);
+            info!("   BTC Market #{}: {} | slug: {} (active={}, closed={}, accepting={})",
+                i + 1, market.question, market.market_slug, market.active, market.closed, market.accepting_orders);
         }
 
         let mut btc_markets = Vec::new();
