@@ -79,23 +79,35 @@ impl MarketDiscovery {
 
     /// Find the next upcoming market using live API data
     pub async fn find_next_upcoming_market(&self) -> Result<Option<BtcMarket>> {
-        info!("🔍 Searching for active Bitcoin 15min markets...");
+        info!("🔍 Searching for active markets matching: '{}'", self.query);
 
-        // Fetch simplified markets from CLOB API
+        // First, try to get full market details (not simplified)
         let page = self
             .client
-            .simplified_markets(None)
+            .markets(None)
             .await
             .context("Failed to fetch markets from CLOB API")?;
 
-        debug!("   Fetched {} markets total", page.data.len());
+        info!("   Fetched {} markets total", page.data.len());
+
+        // Log first few active markets for debugging
+        let mut logged = 0;
+        for market in &page.data {
+            if market.active && !market.closed && logged < 3 {
+                info!("   Sample market: {}", market.question);
+                logged += 1;
+            }
+        }
 
         let mut btc_markets = Vec::new();
         let now = Utc::now();
 
         for market in &page.data {
-            // Filter for Bitcoin 15min markets
-            if !market.condition_id.contains("bitcoin") && !market.condition_id.contains("btc") {
+            // Search in question field for our query (case-insensitive)
+            let question_lower = market.question.to_lowercase();
+            let query_lower = self.query.to_lowercase();
+
+            if !question_lower.contains(&query_lower) {
                 continue;
             }
 
@@ -113,15 +125,13 @@ impl MarketDiscovery {
             let up_token_id = market.tokens[0].token_id.clone();
             let down_token_id = market.tokens[1].token_id.clone();
 
-            // For Bitcoin 15min markets, assume they last 15 minutes
-            // We'll use current time as start and +15min as end
-            // (Real implementation would parse this from market metadata)
-            let start_time = now;
-            let end_time = now + chrono::Duration::minutes(15);
+            // Try to parse market timing from game_start_time or end_date_iso
+            let start_time = market.game_start_time.unwrap_or(now);
+            let end_time = market.end_date_iso.unwrap_or(now + chrono::Duration::minutes(15));
 
             btc_markets.push(BtcMarket {
                 condition_id: market.condition_id.clone(),
-                question: format!("Bitcoin 15min Market ({})", &market.condition_id[..16]),
+                question: market.question.clone(),
                 start_time,
                 end_time,
                 up_token_id,
@@ -129,18 +139,22 @@ impl MarketDiscovery {
                 active: market.active,
                 closed: market.closed,
             });
+
+            info!("   ✅ Matched: {}", market.question);
         }
 
         if btc_markets.is_empty() {
-            warn!("⚠️  No active Bitcoin 15min markets found");
+            warn!("⚠️  No active markets found matching '{}'", self.query);
+            warn!("⚠️  Try changing 'market_query' in config.toml");
             warn!("⚠️  The bot will retry in the next discovery cycle");
             return Ok(None);
         }
 
-        // Return the first active market found
+        // Sort by start time and get next upcoming market
+        btc_markets.sort_by(|a, b| a.start_time.cmp(&b.start_time));
         let market = btc_markets.into_iter().next().unwrap();
 
-        info!("✅ Found active Bitcoin 15min market");
+        info!("✅ Selected market: {}", market.question);
         info!("   Condition ID: {}", &market.condition_id[..20]);
         info!("   UP Token:     {}", &market.up_token_id[..20]);
         info!("   DOWN Token:   {}", &market.down_token_id[..20]);
