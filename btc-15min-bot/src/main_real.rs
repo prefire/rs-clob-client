@@ -59,14 +59,18 @@ impl Bot {
 
         info!("   Wallet address: {:?}", signer.address());
 
-        // Create CLOB client
+        // Create CLOB client for trading (authenticated)
         let client_config = ClientConfig::default();
-        let client = Client::new(&config.blockchain.clob_endpoint, client_config)
+        let trading_client = Client::new(&config.blockchain.clob_endpoint, client_config.clone())
             .context("Failed to create CLOB client")?;
 
-        // Authenticate
+        // Create separate client for market discovery (unauthenticated)
+        let discovery_client = Client::new(&config.blockchain.clob_endpoint, client_config)
+            .context("Failed to create discovery client")?;
+
+        // Authenticate trading client
         info!("   Authenticating with Polymarket...");
-        let authenticated_client = client
+        let authenticated_client = trading_client
             .authentication_builder(&signer)
             .authenticate()
             .await
@@ -75,7 +79,10 @@ impl Bot {
         info!("   ✅ Authentication successful");
 
         // Create components
-        let market_discovery = MarketDiscovery::new(config.strategy.market_query.clone());
+        let market_discovery = MarketDiscovery::new(
+            discovery_client,
+            config.strategy.market_query.clone(),
+        );
         let strategy = VolumeStrategy::new(config.strategy.clone());
         let trader = RealTrader::new(authenticated_client, signer, config.clone());
 
