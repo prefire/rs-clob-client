@@ -81,40 +81,71 @@ impl MarketDiscovery {
     pub async fn find_next_upcoming_market(&self) -> Result<Option<BtcMarket>> {
         info!("🔍 Searching for active markets matching: '{}'", self.query);
 
-        // First, try to get full market details (not simplified)
-        let page = self
-            .client
-            .markets(None)
-            .await
-            .context("Failed to fetch markets from CLOB API")?;
+        let mut all_markets = Vec::new();
+        let mut next_cursor: Option<String> = None;
+        let mut page_count = 0;
+        let max_pages = 10; // Limit to prevent infinite loops
 
-        info!("   Fetched {} markets total", page.data.len());
+        // Fetch multiple pages until we find BTC markets or hit limit
+        loop {
+            page_count += 1;
+            info!("   Fetching page {}...", page_count);
 
-        // Log first few active markets for debugging
-        let mut logged = 0;
-        let mut btc_count = 0;
-        for market in &page.data {
-            // Count BTC markets specifically
-            if market.market_slug.contains("btc-updown-15m") {
-                btc_count += 1;
-                if btc_count <= 3 {
-                    info!("   Found BTC 15min market: {} (active={}, closed={}, accepting={})",
-                        market.question, market.active, market.closed, market.accepting_orders);
-                }
+            let page = self
+                .client
+                .markets(next_cursor)
+                .await
+                .context("Failed to fetch markets from CLOB API")?;
+
+            info!("   Fetched {} markets on page {}", page.data.len(), page_count);
+
+            // Count BTC markets on this page
+            let btc_count_page = page.data.iter()
+                .filter(|m| m.market_slug.contains("btc-updown-15m"))
+                .count();
+
+            if btc_count_page > 0 {
+                info!("   ✅ Found {} BTC 15min markets on page {}", btc_count_page, page_count);
             }
 
-            if market.active && !market.closed && logged < 3 {
-                info!("   Sample active market: {}", market.question);
-                logged += 1;
+            // Check if we should continue before consuming the page
+            let has_next = !page.next_cursor.is_empty();
+            let should_stop = btc_count_page > 0 || page_count >= max_pages || !has_next;
+
+            all_markets.extend(page.data);
+            next_cursor = if page.next_cursor.is_empty() {
+                None
+            } else {
+                Some(page.next_cursor)
+            };
+
+            if should_stop {
+                break;
             }
         }
 
+        info!("   Total markets fetched: {} across {} pages", all_markets.len(), page_count);
+
+        // Count total BTC markets
+        let btc_count = all_markets.iter()
+            .filter(|m| m.market_slug.contains("btc-updown-15m"))
+            .count();
+
         info!("   Total BTC 15min markets found: {}", btc_count);
+
+        // Log first few BTC markets
+        for (i, market) in all_markets.iter()
+            .filter(|m| m.market_slug.contains("btc-updown-15m"))
+            .take(3)
+            .enumerate() {
+            info!("   BTC Market #{}: {} (active={}, closed={}, accepting={})",
+                i + 1, market.question, market.active, market.closed, market.accepting_orders);
+        }
 
         let mut btc_markets = Vec::new();
         let now = Utc::now();
 
-        for market in &page.data {
+        for market in &all_markets {
             // Search in question field AND market slug (case-insensitive)
             let question_lower = market.question.to_lowercase();
             let slug_lower = market.market_slug.to_lowercase();
