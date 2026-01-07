@@ -94,7 +94,7 @@ impl MarketDiscovery {
             let request = EventsRequest::builder()
                 .limit(limit)
                 .offset(offset)
-                .active(true) // Only active events
+                .closed(false) // Only non-closed events (not active filter)
                 .build();
 
             let events = self
@@ -111,9 +111,9 @@ impl MarketDiscovery {
 
             // Log sample slugs on first batch
             if iteration == 0 {
-                for (i, event) in events.iter().take(3).enumerate() {
+                for (i, event) in events.iter().take(5).enumerate() {
                     if let Some(slug) = &event.slug {
-                        info!("   Sample event slug {}: {}", i + 1, slug);
+                        info!("   Sample slug {}: {}", i + 1, slug);
                     }
                 }
             }
@@ -122,6 +122,31 @@ impl MarketDiscovery {
             let btc_count = events.iter()
                 .filter(|e| e.slug.as_ref().map_or(false, |s| s.contains("btc-updown-15m")))
                 .count();
+
+            // Also count and log events containing "btc" or "bitcoin"
+            let btc_related = events.iter()
+                .filter(|e| {
+                    let slug = e.slug.as_deref().unwrap_or("");
+                    let title = e.title.as_deref().unwrap_or("");
+                    slug.to_lowercase().contains("btc") ||
+                    title.to_lowercase().contains("bitcoin")
+                })
+                .count();
+
+            if btc_related > 0 {
+                info!("   Found {} BTC-related events (broader search)", btc_related);
+                // Log first few BTC-related slugs
+                for event in events.iter()
+                    .filter(|e| {
+                        let slug = e.slug.as_deref().unwrap_or("");
+                        slug.to_lowercase().contains("btc")
+                    })
+                    .take(3) {
+                    if let Some(slug) = &event.slug {
+                        info!("      BTC event slug: {}", slug);
+                    }
+                }
+            }
 
             if btc_count > 0 {
                 info!("   ✅ Found {} BTC 15min events in this batch", btc_count);
