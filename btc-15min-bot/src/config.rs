@@ -122,7 +122,7 @@ fn default_chain_id() -> u64 {
 }
 
 fn default_market_query() -> String {
-    "Bitcoin 15min".to_string()
+    "Bitcoin Up or Down".to_string()
 }
 
 fn default_entry_timing() -> u64 {

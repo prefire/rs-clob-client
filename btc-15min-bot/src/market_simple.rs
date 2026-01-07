@@ -103,11 +103,16 @@ impl MarketDiscovery {
         let now = Utc::now();
 
         for market in &page.data {
-            // Search in question field for our query (case-insensitive)
+            // Search in question field AND market slug (case-insensitive)
             let question_lower = market.question.to_lowercase();
+            let slug_lower = market.market_slug.to_lowercase();
             let query_lower = self.query.to_lowercase();
 
-            if !question_lower.contains(&query_lower) {
+            // Match if query appears in question OR slug contains "btc-updown-15m"
+            let matches_query = question_lower.contains(&query_lower);
+            let is_btc_15min = slug_lower.contains("btc-updown-15m");
+
+            if !matches_query && !is_btc_15min {
                 continue;
             }
 
@@ -140,7 +145,7 @@ impl MarketDiscovery {
                 closed: market.closed,
             });
 
-            info!("   ✅ Matched: {}", market.question);
+            info!("   ✅ Matched: {} (slug: {})", market.question, market.market_slug);
         }
 
         if btc_markets.is_empty() {
@@ -155,9 +160,11 @@ impl MarketDiscovery {
         let market = btc_markets.into_iter().next().unwrap();
 
         info!("✅ Selected market: {}", market.question);
-        info!("   Condition ID: {}", &market.condition_id[..20]);
+        info!("   Condition ID: {}", &market.condition_id);
         info!("   UP Token:     {}", &market.up_token_id[..20]);
         info!("   DOWN Token:   {}", &market.down_token_id[..20]);
+        info!("   Start time:   {}", market.start_time);
+        info!("   End time:     {}", market.end_time);
 
         Ok(Some(market))
     }
