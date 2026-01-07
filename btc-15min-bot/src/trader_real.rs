@@ -4,8 +4,7 @@
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use alloy::signers::Signer;
-use alloy::signers::local::LocalSigner;
+use alloy::signers::local::PrivateKeySigner;
 use polymarket_client_sdk::auth::state::Authenticated;
 use polymarket_client_sdk::auth::Normal;
 use polymarket_client_sdk::clob::Client;
@@ -35,21 +34,18 @@ pub struct Position {
 }
 
 /// Real trader with authenticated client
-pub struct RealTrader<S> {
+pub struct RealTrader {
     client: Client<Authenticated<Normal>>,
-    signer: S,
+    signer: PrivateKeySigner,
     config: Config,
     current_position: Option<Position>,
 }
 
-impl<S> RealTrader<S>
-where
-    S: Signer + Clone,
-{
+impl RealTrader {
     /// Create a new real trader
     pub fn new(
         client: Client<Authenticated<Normal>>,
-        signer: S,
+        signer: PrivateKeySigner,
         config: Config,
     ) -> Self {
         Self {
@@ -207,9 +203,7 @@ where
             .build();
 
         if let Ok(response) = self.client.last_trade_price(&request).await {
-            if let Some(price) = response.price {
-                return Ok(price);
-            }
+            return Ok(response.price);
         }
 
         // Fallback to midpoint
@@ -218,18 +212,17 @@ where
             .build();
 
         if let Ok(response) = self.client.midpoint(&request).await {
-            if let Some(price) = response.mid {
-                return Ok(price);
-            }
+            return Ok(response.mid);
         }
 
         // Fallback to price endpoint
         let request = PriceRequest::builder()
             .token_id(token_id.to_string())
+            .side(Side::Buy)
             .build();
 
         let response = self.client.price(&request).await?;
-        response.price.context("No price available")
+        Ok(response.price)
     }
 
     /// Place a market buy order (REAL API CALL)
