@@ -92,12 +92,24 @@ impl MarketDiscovery {
 
         // Log first few active markets for debugging
         let mut logged = 0;
+        let mut btc_count = 0;
         for market in &page.data {
+            // Count BTC markets specifically
+            if market.market_slug.contains("btc-updown-15m") {
+                btc_count += 1;
+                if btc_count <= 3 {
+                    info!("   Found BTC 15min market: {} (active={}, closed={}, accepting={})",
+                        market.question, market.active, market.closed, market.accepting_orders);
+                }
+            }
+
             if market.active && !market.closed && logged < 3 {
-                info!("   Sample market: {}", market.question);
+                info!("   Sample active market: {}", market.question);
                 logged += 1;
             }
         }
+
+        info!("   Total BTC 15min markets found: {}", btc_count);
 
         let mut btc_markets = Vec::new();
         let now = Utc::now();
