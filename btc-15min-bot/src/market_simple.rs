@@ -203,14 +203,21 @@ impl MarketDiscovery {
                 _ => continue,
             };
 
-            // Parse comma-separated token IDs
-            let tokens: Vec<&str> = token_ids.split(',').collect();
+            // Parse token IDs - could be comma-separated or JSON array
+            let tokens: Vec<String> = if token_ids.starts_with('[') {
+                // JSON array format: ["token1", "token2"]
+                serde_json::from_str(token_ids).unwrap_or_default()
+            } else {
+                // Comma-separated format: "token1,token2"
+                token_ids.split(',').map(|s| s.trim().to_string()).collect()
+            };
+
             if tokens.len() != 2 {
                 continue;
             }
 
-            let up_token_id = tokens[0].trim().to_string();
-            let down_token_id = tokens[1].trim().to_string();
+            let up_token_id = tokens[0].clone();
+            let down_token_id = tokens[1].clone();
 
             // Parse event timing from slug timestamp
             // Slug format: "btc-updown-15m-1767785400" where last part is Unix timestamp
