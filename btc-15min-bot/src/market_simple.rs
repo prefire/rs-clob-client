@@ -1,12 +1,13 @@
 //! Real market discovery for Bitcoin 15min markets
 //!
-//! This version uses the CLOB API to discover active markets
+//! This version uses the Gamma API to discover active markets
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use polymarket_client_sdk::clob::Client;
+use polymarket_client_sdk::gamma::Client as GammaClient;
+use polymarket_client_sdk::gamma::types::request::MarketsRequest;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 /// Represents a Bitcoin 15min market
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,149 +66,155 @@ impl std::fmt::Display for MarketSide {
     }
 }
 
-/// Real market discovery using CLOB API
+/// Real market discovery using Gamma API
 pub struct MarketDiscovery {
-    client: Client,
+    client: GammaClient,
     query: String,
 }
 
 impl MarketDiscovery {
     /// Create a new market discovery instance
-    pub fn new(client: Client, query: String) -> Self {
+    pub fn new(client: GammaClient, query: String) -> Self {
         Self { client, query }
     }
 
     /// Find the next upcoming market using live API data
     pub async fn find_next_upcoming_market(&self) -> Result<Option<BtcMarket>> {
-        info!("🔍 Searching for active markets matching: '{}'", self.query);
+        info!("🔍 Searching for active Bitcoin Up or Down markets via Gamma API...");
 
+        // Use Gamma API to fetch markets with pagination
+        let mut offset = 0;
+        let limit = 100;
+        let max_iterations = 50; // Fetch up to 5000 markets
         let mut all_markets = Vec::new();
-        let mut next_cursor: Option<String> = None;
-        let mut page_count = 0;
-        let max_pages = 10; // Limit to prevent infinite loops
 
-        // Fetch multiple pages until we find BTC markets or hit limit
-        loop {
-            page_count += 1;
-            info!("   Fetching page {}...", page_count);
+        for iteration in 0..max_iterations {
+            info!("   Fetching batch {} (offset: {})...", iteration + 1, offset);
 
-            let page = self
+            let request = MarketsRequest::builder()
+                .limit(limit)
+                .offset(offset)
+                .closed(false) // Only active markets
+                .build();
+
+            let markets = self
                 .client
-                .markets(next_cursor)
+                .markets(&request)
                 .await
-                .context("Failed to fetch markets from CLOB API")?;
+                .context("Failed to fetch markets from Gamma API")?;
 
-            info!("   Fetched {} markets on page {}", page.data.len(), page_count);
+            info!("   Fetched {} markets", markets.len());
 
-            // Log sample slugs on first page to see format
-            if page_count == 1 {
-                for (i, market) in page.data.iter().take(5).enumerate() {
-                    info!("   Sample slug {}: {}", i + 1, market.market_slug);
+            if markets.is_empty() {
+                break;
+            }
+
+            // Log sample slugs on first batch
+            if iteration == 0 {
+                for (i, market) in markets.iter().take(3).enumerate() {
+                    if let Some(slug) = &market.slug {
+                        info!("   Sample slug {}: {}", i + 1, slug);
+                    }
                 }
             }
 
-            // Count BTC markets on this page
-            let btc_count_page = page.data.iter()
-                .filter(|m| m.market_slug.contains("btc-updown-15m") ||
-                           m.market_slug.contains("btc") ||
-                           m.question.to_lowercase().contains("bitcoin up or down"))
+            // Count BTC 15min markets in this batch
+            let btc_count = markets.iter()
+                .filter(|m| m.slug.as_ref().map_or(false, |s| s.contains("btc-updown-15m")))
                 .count();
 
-            if btc_count_page > 0 {
-                info!("   ✅ Found {} BTC 15min markets on page {}", btc_count_page, page_count);
+            if btc_count > 0 {
+                info!("   ✅ Found {} BTC 15min markets in this batch", btc_count);
             }
 
-            // Check if we should continue before consuming the page
-            let has_next = !page.next_cursor.is_empty();
-            let should_stop = btc_count_page > 0 || page_count >= max_pages || !has_next;
+            all_markets.extend(markets);
 
-            all_markets.extend(page.data);
-            next_cursor = if page.next_cursor.is_empty() {
-                None
-            } else {
-                Some(page.next_cursor)
-            };
-
-            if should_stop {
+            // Stop early if we found BTC markets
+            if btc_count > 0 {
                 break;
             }
+
+            offset += limit;
         }
 
-        info!("   Total markets fetched: {} across {} pages", all_markets.len(), page_count);
+        info!("   Total markets fetched: {}", all_markets.len());
 
-        // Count total BTC markets with broader search
-        let btc_count = all_markets.iter()
-            .filter(|m| m.market_slug.contains("btc-updown-15m") ||
-                       m.market_slug.contains("btc") ||
-                       m.question.to_lowercase().contains("bitcoin up or down"))
-            .count();
-
-        info!("   Total BTC-related markets found: {}", btc_count);
-
-        // Log first few BTC markets
-        for (i, market) in all_markets.iter()
-            .filter(|m| m.market_slug.contains("btc-updown-15m") ||
-                       m.market_slug.contains("btc") ||
-                       m.question.to_lowercase().contains("bitcoin up or down"))
-            .take(5)
-            .enumerate() {
-            info!("   BTC Market #{}: {} | slug: {} (active={}, closed={}, accepting={})",
-                i + 1, market.question, market.market_slug, market.active, market.closed, market.accepting_orders);
-        }
-
+        // Filter for Bitcoin Up or Down markets
         let mut btc_markets = Vec::new();
         let now = Utc::now();
 
         for market in &all_markets {
-            // Search in question field AND market slug (case-insensitive)
-            let question_lower = market.question.to_lowercase();
-            let slug_lower = market.market_slug.to_lowercase();
-            let query_lower = self.query.to_lowercase();
+            // Match by slug pattern "btc-updown-15m-{timestamp}"
+            let slug = match &market.slug {
+                Some(s) => s,
+                None => continue,
+            };
 
-            // Match if query appears in question OR slug contains "btc-updown-15m"
-            let matches_query = question_lower.contains(&query_lower);
-            let is_btc_15min = slug_lower.contains("btc-updown-15m");
-
-            if !matches_query && !is_btc_15min {
+            if !slug.contains("btc-updown-15m") {
                 continue;
             }
 
-            // Skip closed or inactive markets
-            if market.closed || !market.active || !market.accepting_orders {
+            // Skip closed markets
+            if market.closed.unwrap_or(false) {
                 continue;
             }
 
-            // Check if we have exactly 2 tokens (UP and DOWN)
-            if market.tokens.len() != 2 {
+            // Check if market has outcomes (clob_token_ids)
+            let token_ids = match &market.clob_token_ids {
+                Some(ids) if !ids.is_empty() => ids,
+                _ => continue,
+            };
+
+            // Parse comma-separated token IDs
+            let tokens: Vec<&str> = token_ids.split(',').collect();
+            if tokens.len() != 2 {
                 continue;
             }
 
-            // Extract token IDs
-            let up_token_id = market.tokens[0].token_id.clone();
-            let down_token_id = market.tokens[1].token_id.clone();
+            let up_token_id = tokens[0].trim().to_string();
+            let down_token_id = tokens[1].trim().to_string();
 
-            // Try to parse market timing from game_start_time or end_date_iso
-            let start_time = market.game_start_time.unwrap_or(now);
-            let end_time = market.end_date_iso.unwrap_or(now + chrono::Duration::minutes(15));
+            // Parse market timing from ISO strings
+            let start_time = market.game_start_time
+                .as_ref()
+                .and_then(|s| s.parse::<DateTime<Utc>>().ok())
+                .unwrap_or(now);
+
+            let end_time = market.end_date_iso
+                .as_ref()
+                .and_then(|s| s.parse::<DateTime<Utc>>().ok())
+                .unwrap_or(start_time + chrono::Duration::minutes(15));
 
             btc_markets.push(BtcMarket {
-                condition_id: market.condition_id.clone(),
-                question: market.question.clone(),
+                condition_id: market.condition_id.clone().unwrap_or_default(),
+                question: market.question.clone().unwrap_or_else(|| "Unknown".to_string()),
                 start_time,
                 end_time,
                 up_token_id,
                 down_token_id,
-                active: market.active,
-                closed: market.closed,
+                active: market.active.unwrap_or(true),
+                closed: market.closed.unwrap_or(false),
             });
-
-            info!("   ✅ Matched: {} (slug: {})", market.question, market.market_slug);
         }
 
+        info!("   Total BTC 15min markets found: {}", btc_markets.len());
+
         if btc_markets.is_empty() {
-            warn!("⚠️  No active markets found matching '{}'", self.query);
-            warn!("⚠️  Try changing 'market_query' in config.toml");
+            warn!("⚠️  No active Bitcoin Up or Down markets found");
             warn!("⚠️  The bot will retry in the next discovery cycle");
+            return Ok(None);
+        }
+
+        // Log first few markets
+        for (i, market) in btc_markets.iter().take(3).enumerate() {
+            info!("   Market #{}: {} (starts: {})", i + 1, market.question, market.start_time);
+        }
+
+        // Filter to only upcoming markets (start time in future)
+        btc_markets.retain(|m| m.start_time > now);
+
+        if btc_markets.is_empty() {
+            warn!("⚠️  No upcoming Bitcoin Up or Down markets found");
             return Ok(None);
         }
 
@@ -215,10 +222,10 @@ impl MarketDiscovery {
         btc_markets.sort_by(|a, b| a.start_time.cmp(&b.start_time));
         let market = btc_markets.into_iter().next().unwrap();
 
-        info!("✅ Selected market: {}", market.question);
+        info!("✅ Selected next upcoming market: {}", market.question);
         info!("   Condition ID: {}", &market.condition_id);
-        info!("   UP Token:     {}", &market.up_token_id[..20]);
-        info!("   DOWN Token:   {}", &market.down_token_id[..20]);
+        info!("   UP Token:     {}...", &market.up_token_id[..20]);
+        info!("   DOWN Token:   {}...", &market.down_token_id[..20]);
         info!("   Start time:   {}", market.start_time);
         info!("   End time:     {}", market.end_time);
 

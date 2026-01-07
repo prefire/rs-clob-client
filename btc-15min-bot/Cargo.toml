@@ -6,7 +6,7 @@ rust-version = "1.88"
 
 [dependencies]
 # Polymarket SDK
-polymarket-client-sdk = { path = "..", features = ["ws", "data"] }
+polymarket-client-sdk = { path = "..", features = ["ws", "data", "gamma"] }
 
 # Async runtime
 tokio = { version = "1.49", features = ["full"] }

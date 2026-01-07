@@ -14,6 +14,7 @@ use anyhow::{Context, Result};
 use alloy::signers::Signer as _;
 use alloy::signers::local::LocalSigner;
 use polymarket_client_sdk::clob::{Client, Config as ClientConfig};
+use polymarket_client_sdk::gamma::Client as GammaClient;
 use std::str::FromStr;
 use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
@@ -61,12 +62,8 @@ impl Bot {
 
         // Create CLOB client for trading (authenticated)
         let client_config = ClientConfig::default();
-        let trading_client = Client::new(&config.blockchain.clob_endpoint, client_config.clone())
+        let trading_client = Client::new(&config.blockchain.clob_endpoint, client_config)
             .context("Failed to create CLOB client")?;
-
-        // Create separate client for market discovery (unauthenticated)
-        let discovery_client = Client::new(&config.blockchain.clob_endpoint, client_config)
-            .context("Failed to create discovery client")?;
 
         // Authenticate trading client
         info!("   Authenticating with Polymarket...");
@@ -78,9 +75,12 @@ impl Bot {
 
         info!("   ✅ Authentication successful");
 
+        // Create Gamma API client for market discovery (unauthenticated)
+        let gamma_client = GammaClient::default();
+
         // Create components
         let market_discovery = MarketDiscovery::new(
-            discovery_client,
+            gamma_client,
             config.strategy.market_query.clone(),
         );
         let strategy = VolumeStrategy::new(config.strategy.clone());
