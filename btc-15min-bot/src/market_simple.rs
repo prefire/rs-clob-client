@@ -5,7 +5,7 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use polymarket_client_sdk::gamma::Client as GammaClient;
-use polymarket_client_sdk::gamma::types::request::MarketsRequest;
+use polymarket_client_sdk::gamma::types::request::EventsRequest;
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
@@ -80,56 +80,56 @@ impl MarketDiscovery {
 
     /// Find the next upcoming market using live API data
     pub async fn find_next_upcoming_market(&self) -> Result<Option<BtcMarket>> {
-        info!("🔍 Searching for active Bitcoin Up or Down markets via Gamma API...");
+        info!("🔍 Searching for active Bitcoin Up or Down EVENTS via Gamma API...");
 
-        // Use Gamma API to fetch markets with pagination
+        // Use Gamma API to fetch events (not markets!)
         let mut offset = 0;
         let limit = 100;
-        let max_iterations = 50; // Fetch up to 5000 markets
-        let mut all_markets = Vec::new();
+        let max_iterations = 50; // Fetch up to 5000 events
+        let mut all_events = Vec::new();
 
         for iteration in 0..max_iterations {
             info!("   Fetching batch {} (offset: {})...", iteration + 1, offset);
 
-            let request = MarketsRequest::builder()
+            let request = EventsRequest::builder()
                 .limit(limit)
                 .offset(offset)
-                .closed(false) // Only active markets
+                .active(true) // Only active events
                 .build();
 
-            let markets = self
+            let events = self
                 .client
-                .markets(&request)
+                .events(&request)
                 .await
-                .context("Failed to fetch markets from Gamma API")?;
+                .context("Failed to fetch events from Gamma API")?;
 
-            info!("   Fetched {} markets", markets.len());
+            info!("   Fetched {} events", events.len());
 
-            if markets.is_empty() {
+            if events.is_empty() {
                 break;
             }
 
             // Log sample slugs on first batch
             if iteration == 0 {
-                for (i, market) in markets.iter().take(3).enumerate() {
-                    if let Some(slug) = &market.slug {
-                        info!("   Sample slug {}: {}", i + 1, slug);
+                for (i, event) in events.iter().take(3).enumerate() {
+                    if let Some(slug) = &event.slug {
+                        info!("   Sample event slug {}: {}", i + 1, slug);
                     }
                 }
             }
 
-            // Count BTC 15min markets in this batch
-            let btc_count = markets.iter()
-                .filter(|m| m.slug.as_ref().map_or(false, |s| s.contains("btc-updown-15m")))
+            // Count BTC 15min events in this batch
+            let btc_count = events.iter()
+                .filter(|e| e.slug.as_ref().map_or(false, |s| s.contains("btc-updown-15m")))
                 .count();
 
             if btc_count > 0 {
-                info!("   ✅ Found {} BTC 15min markets in this batch", btc_count);
+                info!("   ✅ Found {} BTC 15min events in this batch", btc_count);
             }
 
-            all_markets.extend(markets);
+            all_events.extend(events);
 
-            // Stop early if we found BTC markets
+            // Stop early if we found BTC events
             if btc_count > 0 {
                 break;
             }
@@ -137,15 +137,15 @@ impl MarketDiscovery {
             offset += limit;
         }
 
-        info!("   Total markets fetched: {}", all_markets.len());
+        info!("   Total events fetched: {}", all_events.len());
 
-        // Filter for Bitcoin Up or Down markets
+        // Filter for Bitcoin Up or Down events and extract markets
         let mut btc_markets = Vec::new();
         let now = Utc::now();
 
-        for market in &all_markets {
-            // Match by slug pattern "btc-updown-15m-{timestamp}"
-            let slug = match &market.slug {
+        for event in &all_events {
+            // Match by event slug pattern "btc-updown-15m-{timestamp}"
+            let slug = match &event.slug {
                 Some(s) => s,
                 None => continue,
             };
@@ -154,10 +154,23 @@ impl MarketDiscovery {
                 continue;
             }
 
-            // Skip closed markets
-            if market.closed.unwrap_or(false) {
+            // Skip closed events
+            if event.closed.unwrap_or(false) {
                 continue;
             }
+
+            // Events contain markets - get the first market from the event
+            let markets = match &event.markets {
+                Some(m) if !m.is_empty() => m,
+                _ => continue,
+            };
+
+            // Bitcoin Up or Down events should have exactly 1 market with 2 outcomes
+            if markets.len() != 1 {
+                continue;
+            }
+
+            let market = &markets[0];
 
             // Check if market has outcomes (clob_token_ids)
             let token_ids = match &market.clob_token_ids {
@@ -174,26 +187,21 @@ impl MarketDiscovery {
             let up_token_id = tokens[0].trim().to_string();
             let down_token_id = tokens[1].trim().to_string();
 
-            // Parse market timing from ISO strings
-            let start_time = market.game_start_time
-                .as_ref()
-                .and_then(|s| s.parse::<DateTime<Utc>>().ok())
-                .unwrap_or(now);
-
-            let end_time = market.end_date_iso
-                .as_ref()
-                .and_then(|s| s.parse::<DateTime<Utc>>().ok())
-                .unwrap_or(start_time + chrono::Duration::minutes(15));
+            // Parse event timing
+            let start_time = event.start_date.unwrap_or(now);
+            let end_time = event.end_date.unwrap_or(start_time + chrono::Duration::minutes(15));
 
             btc_markets.push(BtcMarket {
                 condition_id: market.condition_id.clone().unwrap_or_default(),
-                question: market.question.clone().unwrap_or_else(|| "Unknown".to_string()),
+                question: market.question.clone()
+                    .or_else(|| event.title.clone())
+                    .unwrap_or_else(|| "Unknown".to_string()),
                 start_time,
                 end_time,
                 up_token_id,
                 down_token_id,
-                active: market.active.unwrap_or(true),
-                closed: market.closed.unwrap_or(false),
+                active: event.active.unwrap_or(true),
+                closed: event.closed.unwrap_or(false),
             });
         }
 
