@@ -89,8 +89,8 @@ impl RealTrader {
 
         info!("   Current {} price: {:.4}", signal.side, current_price);
 
-        // Calculate shares to buy
-        let shares = self.config.strategy.trade_size_usdc / current_price;
+        // Calculate shares to buy (round to 6 decimal places for Amount validation)
+        let shares = (self.config.strategy.trade_size_usdc / current_price).round_dp(6);
 
         info!("   Placing order for {:.2} shares at ${:.2}", shares, self.config.strategy.trade_size_usdc);
 
